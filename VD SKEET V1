@@ -7279,6 +7279,8 @@ do -- Visuals
 	ESP:Label({Message = "Self"})
 	ESP:Toggle({Name = "Trail", Flag = "VD_Self_Trail"}):ColorPicker({Flag = "VD_Self_TrailColor", Default = Color3.fromRGB(150, 110, 255)})
 	ESP:Toggle({Name = "Trail rainbow", Flag = "VD_Self_TrailRainbow"})
+	ESP:Dropdown({Name = "Trail origin", Flag = "VD_Self_TrailOrigin", Content = {"Feet", "Both legs"}, Default = "Feet"})
+	ESP:Slider({Name = "Trail width", Flag = "VD_Self_TrailWidth", Min = 0.1, Max = 4, Default = 1, Decimal = 0.1, Ending = " st"})
 	ESP:Toggle({Name = "China hat", Flag = "VD_Self_Hat"}):ColorPicker({Flag = "VD_Self_HatColor", Default = Color3.fromRGB(150, 110, 255)})
 	ESP:Toggle({Name = "China hat rainbow", Flag = "VD_Self_HatRainbow", Default = true})
 	--
@@ -7292,6 +7294,30 @@ do -- Visuals
 	Utility:Label({Message = "World Effects"})
 	Utility:Toggle({Name = "Rain", Flag = "VD_FX_Rain"}):ColorPicker({Flag = "VD_FX_RainColor", Default = Color3.fromRGB(170, 200, 255)})
 	Utility:Toggle({Name = "Snow", Flag = "VD_FX_Snow"}):ColorPicker({Flag = "VD_FX_SnowColor", Default = Color3.fromRGB(255, 255, 255)})
+	--
+	-- Post-processing: our own effects; while one is on, the game's effect of the same class is paused
+	local function Post() if World.Post then World.Post() end end
+	Utility:Label({Message = "Post-processing"})
+	Utility:Toggle({Name = "Bloom", Flag = "VD_PP_Bloom", Callback = Post})
+	Utility:Slider({Name = "Bloom intensity", Flag = "VD_PP_BloomIntensity", Min = 0, Max = 5, Default = 1, Decimal = 0.05, Callback = Post})
+	Utility:Slider({Name = "Bloom size", Flag = "VD_PP_BloomSize", Min = 0, Max = 56, Default = 24, Decimal = 1, Callback = Post})
+	Utility:Slider({Name = "Bloom threshold", Flag = "VD_PP_BloomThreshold", Min = 0, Max = 4, Default = 0.8, Decimal = 0.05, Callback = Post})
+	Utility:Toggle({Name = "Depth of field", Flag = "VD_PP_DOF", Callback = Post})
+	Utility:Slider({Name = "DOF far intensity", Flag = "VD_PP_DOFFar", Min = 0, Max = 100, Default = 40, Ending = "%", Callback = Post})
+	Utility:Slider({Name = "DOF near intensity", Flag = "VD_PP_DOFNear", Min = 0, Max = 100, Default = 0, Ending = "%", Callback = Post})
+	Utility:Slider({Name = "DOF focus distance", Flag = "VD_PP_DOFFocus", Min = 0, Max = 200, Default = 30, Ending = " st", Callback = Post})
+	Utility:Slider({Name = "DOF in-focus radius", Flag = "VD_PP_DOFRadius", Min = 0, Max = 50, Default = 20, Ending = " st", Callback = Post})
+	Utility:Toggle({Name = "Sun rays", Flag = "VD_PP_SunRays", Callback = Post})
+	Utility:Slider({Name = "Sun rays intensity", Flag = "VD_PP_SunIntensity", Min = 0, Max = 100, Default = 25, Ending = "%", Callback = Post})
+	Utility:Slider({Name = "Sun rays spread", Flag = "VD_PP_SunSpread", Min = 0, Max = 100, Default = 50, Ending = "%", Callback = Post})
+	Utility:Toggle({Name = "Color correction", Flag = "VD_PP_Grade", Callback = Post})
+		:ColorPicker({Flag = "VD_PP_GradeTint", Default = Color3.new(1, 1, 1), Callback = Post})
+	Utility:Slider({Name = "Brightness", Flag = "VD_PP_Brightness", Min = -200, Max = 200, Default = 0, Callback = Post})
+	Utility:Slider({Name = "Contrast", Flag = "VD_PP_Contrast", Min = -200, Max = 200, Default = 0, Callback = Post})
+	Utility:Slider({Name = "Saturation", Flag = "VD_PP_Saturation", Min = -200, Max = 200, Default = 0, Callback = Post})
+	Utility:Slider({Name = "Exposure", Flag = "VD_PP_Exposure", Min = -200, Max = 200, Default = 0, Callback = Post})
+	Utility:Toggle({Name = "Grayscale screen (B&W)", Flag = "VD_PP_Gray", Callback = Post})
+	Utility:Slider({Name = "Grayscale strength", Flag = "VD_PP_GrayStrength", Min = 0, Max = 100, Default = 100, Ending = "%", Callback = Post})
 end
 --
 do -- Main
@@ -8730,30 +8756,84 @@ local function RainbowSequence(Offset)
 	return ColorSequence.new(Points)
 end
 --
+-- Trail.Items = {{Object, A0, A1, Part}}: one ribbon at the soles ("Feet") or one per leg ("Both legs")
+Trail.Items = {}
+local TRAIL_LEGS = {
+	{"LeftFoot", "Left Leg", "LeftLowerLeg"},   -- R15 foot first, then R6 leg
+	{"RightFoot", "Right Leg", "RightLowerLeg"},
+}
+--
+local function ClearTrail()
+	for _, Item in Trail.Items do
+		pcall(function() Item.Object:Destroy(); Item.A0:Destroy(); Item.A1:Destroy() end)
+	end
+	table.clear(Trail.Items)
+	Trail.Character, Trail.Mode = nil, nil
+end
+--
+local function NewTrailItem(Part)
+	local A0 = Instance.new("Attachment"); A0.Name = "\0"; A0.Parent = Part
+	local A1 = Instance.new("Attachment"); A1.Name = "\0"; A1.Parent = Part
+	local Object = Instance.new("Trail")
+	Object.Name = "\0"
+	Object.Attachment0, Object.Attachment1 = A0, A1
+	Object.Lifetime = 0.7
+	Object.LightEmission = 0.6
+	Object.FaceCamera = true
+	Object.Transparency = NumberSequence.new(0.15, 1)
+	Object.Parent = Part
+	return {Object = Object, A0 = A0, A1 = A1, Part = Part}
+end
+--
+-- Distance from the HumanoidRootPart centre down to the soles
+local function GetFeetOffset(Character, Root, Humanoid)
+	if Humanoid.RigType == Enum.HumanoidRigType.R15 then
+		return Root.Size.Y / 2 + Humanoid.HipHeight
+	end
+	local Leg = Character:FindFirstChild("Left Leg") or Character:FindFirstChild("Right Leg")
+	return Root.Size.Y / 2 + (Leg and Leg.Size.Y or 2) + Humanoid.HipHeight
+end
+--
 local function UpdateTrail()
-	local _, Root = GetCharacterParts(Client)
+	local Character, Root, Humanoid = GetCharacterParts(Client)
 	if not Get("VD_Self_Trail") or not Root then
-		if Trail.Object then Trail.Object:Destroy(); Trail.A0:Destroy(); Trail.A1:Destroy(); Trail.Object = nil end
+		if #Trail.Items > 0 then ClearTrail() end
 		return
 	end
-	if not Trail.Object or Trail.Object.Parent ~= Root then
-		if Trail.Object then Trail.Object:Destroy(); Trail.A0:Destroy(); Trail.A1:Destroy() end
-		Trail.A0 = Instance.new("Attachment"); Trail.A0.Name = "\0"; Trail.A0.Position = Vector3.new(0, 0.9, 0); Trail.A0.Parent = Root
-		Trail.A1 = Instance.new("Attachment"); Trail.A1.Name = "\0"; Trail.A1.Position = Vector3.new(0, -0.9, 0); Trail.A1.Parent = Root
-		local Object = Instance.new("Trail")
-		Object.Name = "\0"
-		Object.Attachment0, Object.Attachment1 = Trail.A0, Trail.A1
-		Object.Lifetime = 0.7
-		Object.LightEmission = 0.6
-		Object.FaceCamera = true
-		Object.Transparency = NumberSequence.new(0.15, 1)
-		Object.Parent = Root
-		Trail.Object = Object
+	local Mode = Get("VD_Self_TrailOrigin") or "Feet"
+	--
+	-- Rebuild on respawn, mode change, or when a part we sit on was removed
+	local Valid = Trail.Character == Character and Trail.Mode == Mode and #Trail.Items > 0
+	if Valid then
+		for _, Item in Trail.Items do
+			if not Item.Object.Parent or not Item.A0.Parent or not Item.A1.Parent or Item.Part.Parent ~= Character then Valid = false break end
+		end
 	end
-	if Get("VD_Self_TrailRainbow") then
-		Trail.Object.Color = RainbowSequence(os.clock() * 0.25)
-	else
-		Trail.Object.Color = ColorSequence.new(GetColor("VD_Self_TrailColor", Color3.fromRGB(150, 110, 255)))
+	if not Valid then
+		ClearTrail()
+		if Mode == "Both legs" then
+			for _, Names in TRAIL_LEGS do
+				for _, Name in Names do
+					local Part = Character:FindFirstChild(Name)
+					if Part and Part:IsA("BasePart") then table.insert(Trail.Items, NewTrailItem(Part)) break end
+				end
+			end
+		end
+		if #Trail.Items == 0 then -- "Feet", or no legs found: single ribbon on the root at sole height
+			table.insert(Trail.Items, NewTrailItem(Root))
+		end
+		Trail.Character, Trail.Mode = Character, Mode
+	end
+	--
+	-- Ribbon starts at the soles and goes up by Width (FaceCamera keeps it facing you)
+	local Width = math.max(Get("VD_Self_TrailWidth") or 1, 0.05)
+	local Color = Get("VD_Self_TrailRainbow") and RainbowSequence(os.clock() * 0.25)
+		or ColorSequence.new(GetColor("VD_Self_TrailColor", Color3.fromRGB(150, 110, 255)))
+	for _, Item in Trail.Items do
+		local Bottom = (Item.Part == Root and -GetFeetOffset(Character, Root, Humanoid) or -Item.Part.Size.Y / 2) + 0.05
+		Item.A0.Position = Vector3.new(0, Bottom, 0)
+		Item.A1.Position = Vector3.new(0, Bottom + Width, 0)
+		Item.Object.Color = Color
 	end
 end
 --
@@ -9020,6 +9100,147 @@ function World.Body(State)
 	end
 end
 --
+-- ===================== Post-processing (Bloom / DOF / Sun rays / Color correction / Grayscale) =====================
+-- Own effects live in Lighting and are recreated if the game clears them on a map change.
+-- While our Bloom / DOF / Sun rays is on, the game's effect of the same class is disabled and restored afterwards.
+local Post = {Effects = {}, Suppressed = {}, ExposureApplied = false, ExposureWanted = nil}
+local POST_CLASSES = {Bloom = "BloomEffect", DOF = "DepthOfFieldEffect", SunRays = "SunRaysEffect", Grade = "ColorCorrectionEffect", Gray = "ColorCorrectionEffect"}
+local POST_SUPPRESS = {BloomEffect = "VD_PP_Bloom", DepthOfFieldEffect = "VD_PP_DOF", SunRaysEffect = "VD_PP_SunRays"}
+Saved.Exposure = Lighting.ExposureCompensation
+--
+local function PostEffect(Key)
+	local Effect = Post.Effects[Key]
+	if not Effect or Effect.Parent ~= Lighting then
+		if Effect then pcall(Effect.Destroy, Effect) end
+		Effect = Instance.new(POST_CLASSES[Key])
+		Effect.Name = "\0VDSkeet"
+		Effect.Enabled = false
+		Post.Effects[Key] = Effect
+		Effect.Parent = Lighting
+	end
+	return Effect
+end
+--
+local function IsOwnPostEffect(Object)
+	for _, Effect in Post.Effects do
+		if Effect == Object then return true end
+	end
+	return false
+end
+--
+local function SuppressGameEffects()
+	local Camera = Workspace.CurrentCamera
+	for _, Container in {Lighting, Camera} do
+		for _, Child in Container:GetChildren() do
+			local Flag = POST_SUPPRESS[Child.ClassName]
+			if Flag and not IsOwnPostEffect(Child) then
+				if Get(Flag) then
+					-- remember the game's state (and pick up the game re-enabling it while we hold it off)
+					if Post.Suppressed[Child] == nil or Child.Enabled then Post.Suppressed[Child] = Child.Enabled end
+					if Child.Enabled then Child.Enabled = false end
+				elseif Post.Suppressed[Child] ~= nil then
+					Child.Enabled = Post.Suppressed[Child]
+					Post.Suppressed[Child] = nil
+				end
+			end
+		end
+	end
+	-- effects the game moved away or destroyed
+	for Child, Enabled in Post.Suppressed do
+		if Child.Parent ~= Lighting and (not Camera or Child.Parent ~= Camera) then
+			if Child.Parent then pcall(function() Child.Enabled = Enabled end) end
+			Post.Suppressed[Child] = nil
+		end
+	end
+end
+--
+-- Exposure is a Lighting property: slider is an offset on top of the game's value (0 = unchanged)
+local function ApplyExposure()
+	if Get("VD_PP_Grade") then
+		Post.ExposureApplied = true
+		local Wanted = math.clamp(Saved.Exposure + (Get("VD_PP_Exposure") or 0) / 100, -3, 3)
+		Post.ExposureWanted = Wanted
+		if math.abs(Lighting.ExposureCompensation - Wanted) > 1e-3 then Lighting.ExposureCompensation = Wanted end
+	elseif Post.ExposureApplied then
+		Post.ExposureApplied = false
+		Post.ExposureWanted = nil
+		Lighting.ExposureCompensation = Saved.Exposure
+	end
+end
+--
+function World.Post()
+	local Bloom = PostEffect("Bloom")
+	Bloom.Intensity = Get("VD_PP_BloomIntensity") or 1
+	Bloom.Size = Get("VD_PP_BloomSize") or 24
+	Bloom.Threshold = Get("VD_PP_BloomThreshold") or 0.8
+	Bloom.Enabled = Get("VD_PP_Bloom") == true
+	--
+	local DOF = PostEffect("DOF")
+	DOF.FarIntensity = (Get("VD_PP_DOFFar") or 40) / 100
+	DOF.NearIntensity = (Get("VD_PP_DOFNear") or 0) / 100
+	DOF.FocusDistance = Get("VD_PP_DOFFocus") or 30
+	DOF.InFocusRadius = Get("VD_PP_DOFRadius") or 20
+	DOF.Enabled = Get("VD_PP_DOF") == true
+	--
+	local SunRays = PostEffect("SunRays")
+	SunRays.Intensity = (Get("VD_PP_SunIntensity") or 25) / 100
+	SunRays.Spread = (Get("VD_PP_SunSpread") or 50) / 100
+	SunRays.Enabled = Get("VD_PP_SunRays") == true
+	--
+	-- -200..200 on the sliders = -2..2 on the effect
+	local Grade = PostEffect("Grade")
+	Grade.Brightness = (Get("VD_PP_Brightness") or 0) / 100
+	Grade.Contrast = (Get("VD_PP_Contrast") or 0) / 100
+	Grade.Saturation = (Get("VD_PP_Saturation") or 0) / 100
+	Grade.TintColor = GetColor("VD_PP_GradeTint", Color3.new(1, 1, 1))
+	Grade.Enabled = Get("VD_PP_Grade") == true
+	ApplyExposure()
+	--
+	local Gray = PostEffect("Gray")
+	local Strength = (Get("VD_PP_GrayStrength") or 100) / 100
+	Gray.Saturation = -Strength
+	Gray.Contrast = 0.1 * Strength
+	Gray.Enabled = Get("VD_PP_Gray") == true
+	--
+	SuppressGameEffects()
+end
+--
+function World.PostActive()
+	return Get("VD_PP_Bloom") or Get("VD_PP_DOF") or Get("VD_PP_SunRays") or Get("VD_PP_Grade") or Get("VD_PP_Gray")
+		or next(Post.Suppressed) ~= nil or Post.ExposureApplied
+end
+--
+function World.PostCleanup()
+	for _, Effect in Post.Effects do pcall(Effect.Destroy, Effect) end
+	table.clear(Post.Effects)
+	for Child, Enabled in Post.Suppressed do
+		if Child.Parent then pcall(function() Child.Enabled = Enabled end) end
+	end
+	table.clear(Post.Suppressed)
+	if Post.ExposureApplied then
+		Post.ExposureApplied = false
+		Lighting.ExposureCompensation = Saved.Exposure
+	end
+end
+--
+Connect(Lighting:GetPropertyChangedSignal("ExposureCompensation"), function()
+	local Current = Lighting.ExposureCompensation
+	if Post.ExposureApplied then
+		if Post.ExposureWanted and math.abs(Current - Post.ExposureWanted) > 1e-3 then
+			Saved.Exposure = Current -- the game changed it: new base, re-apply our offset
+			ApplyExposure()
+		end
+	else
+		Saved.Exposure = Current
+	end
+end)
+Connect(Lighting.ChildAdded, function(Child)
+	local Flag = POST_SUPPRESS[Child.ClassName]
+	if Flag and Get(Flag) and not IsOwnPostEffect(Child) then
+		task.defer(function() pcall(SuppressGameEffects) end)
+	end
+end)
+--
 Connect(Lighting:GetPropertyChangedSignal("Ambient"), function()
 	if Get("VD_W_Ambience") then
 		local Wanted = GetColor("VD_W_AmbInside", Lighting.Ambient)
@@ -9105,6 +9326,7 @@ Loop(0.5, function()
 	if Get("VD_K_AntiBlind") or Get("VD_K_DoubleTap") then InstallNamecallHook() end
 	if Get("VD_K_HiddenNoCD") then InstallHiddenHook() end
 	if Get("VD_W_Body") then World.Body(true) end
+	if World.PostActive() then World.Post() end -- re-create effects / re-pause the game's after a map change
 end)
 --
 Connect(Client.Idled, function()
@@ -9137,7 +9359,7 @@ do -- Unload cleanup
 		pcall(function()
 			for _, Object in Hat.Triangles do Object:Remove() end
 			for _, Object in Hat.Lines do Object:Remove() end
-			if Trail.Object then Trail.Object:Destroy(); Trail.A0:Destroy(); Trail.A1:Destroy() end
+			ClearTrail()
 			if Weather.Part then Weather.Part:Destroy() end
 			if Cursor.Saved then
 				UserInputService.MouseBehavior = Cursor.Saved.Behavior
@@ -9158,6 +9380,7 @@ do -- Unload cleanup
 		pcall(World.Time, false)
 		pcall(World.Sky, false)
 		pcall(World.Body, false)
+		pcall(World.PostCleanup)
 		pcall(function()
 			for Root, Original in Killer.Hitboxes do
 				if Root.Parent then Root.Size, Root.Transparency, Root.CanCollide = Original.Size, Original.Transparency, Original.CanCollide end
