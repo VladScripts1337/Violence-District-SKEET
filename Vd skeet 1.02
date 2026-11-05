@@ -8697,18 +8697,13 @@ Connect(RunService.Stepped, function()
 end)
 --
 -- Anti-fling (Misc): protection from other players' fling scripts. Normal body blocking stays as it is.
---   1. A player whose character moves or spins absurdly fast (any part, not just the root), or who carries fling
---      movers (BodyAngularVelocity / BodyThrust / AngularVelocity...), loses collision on YOUR client while it lasts
---      (+3 s), so their parts can't push you. Everyone else keeps colliding.
---   2. If you still get launched, your velocity is zeroed (before and after physics) and you're put back where you
---      last stood on the ground.
-local AntiFling = {Flagged = {}, Saved = {}, SafeCFrame = nil, SafeTime = 0, LastRescue = 0, LastNotify = 0, LastScan = 0}
-local FLING_SPIN = 30   -- rad/s on any part of another player (running / vaulting stays well below)
-local FLING_SPEED = 100 -- studs/s on any part of another player (lunges and sprints are ~20-50)
-local FLING_HOLD = 3    -- s a flagged player stays non-collidable after they calm down
-local SELF_SPIN = 30    -- your own root
-local SELF_SPEED = 100  -- your own root, horizontal
-local SELF_UP = 80      -- your own root, upward (a jump is ~50)
+--   1. A player whose character moves or spins absurdly fast (that's what a fling script does) loses collision
+--      on YOUR client while it lasts (+3 s), so their parts can't push you. Everyone else keeps colliding.
+--   2. If you still get launched, your velocity is zeroed and you're put back where you last stood.
+local AntiFling = {Flagged = {}, Saved = {}, SafeCFrame = nil, SafeTime = 0, LastRescue = 0}
+local FLING_SPIN = 60 -- rad/s: walking, vaulting or ragdolling never spins a character this fast
+local FLING_HOLD = 3  -- s a flagged player stays non-collidable after they calm down
+local FLING_SPEED = 150 -- studs/s: far above running, lunges and jumps; fling scripts go into the thousands
 --
 local function RestoreFlingCollision(Player)
 	for Part, Owner in AntiFling.Saved do
@@ -8719,60 +8714,10 @@ local function RestoreFlingCollision(Player)
 	end
 end
 --
-local function CharacterIsFlinging(Character)
-	for _, Part in Character:GetChildren() do
-		if Part:IsA("BasePart") then
-			if Part.AssemblyAngularVelocity.Magnitude > FLING_SPIN or Part.AssemblyLinearVelocity.Magnitude > FLING_SPEED then
-				return true
-			end
-		end
-	end
-	return false
+local function IsFlinging(Root, Limit)
+	return Root.AssemblyAngularVelocity.Magnitude > FLING_SPIN or Root.AssemblyLinearVelocity.Magnitude > Limit
 end
 --
--- Only movers that are actually set to fling values count (the game may use weak ones for its own movement)
-local function CharacterHasFlingMover(Character)
-	for _, Object in Character:GetDescendants() do
-		local Class = Object.ClassName
-		if Class == "BodyAngularVelocity" and Object.AngularVelocity.Magnitude > FLING_SPIN then return true end
-		if Class == "AngularVelocity" and Object.Enabled and Object.AngularVelocity.Magnitude > FLING_SPIN then return true end
-		if Class == "BodyThrust" and Object.Force.Magnitude > 1e4 then return true end
-		if Class == "Torque" and Object.Enabled and Object.Torque.Magnitude > 1e5 then return true end
-		if Class == "BodyVelocity" and Object.Velocity.Magnitude > FLING_SPEED then return true end
-	end
-	return false
-end
---
-local function StopOwnLaunch(Root, Now, Rescue)
-	Root.AssemblyLinearVelocity = Vector3.zero
-	Root.AssemblyAngularVelocity = Vector3.zero
-	if Rescue and AntiFling.SafeCFrame and Now - AntiFling.LastRescue > 0.25 then
-		Root.CFrame = AntiFling.SafeCFrame
-		AntiFling.LastRescue = Now
-	end
-	if Now - AntiFling.LastNotify > 3 then
-		AntiFling.LastNotify = Now
-		Library:Notify({Message = "Anti-fling: launch stopped", Delay = 1.5})
-	end
-end
---
-local function OwnLaunch(Character, Root)
-	local Linear, Angular = Root.AssemblyLinearVelocity, Root.AssemblyAngularVelocity
-	local Horizontal = Vector3.new(Linear.X, 0, Linear.Z).Magnitude
-	-- ragdolled: the game throws you around a bit itself, so only react to clearly absurd values
-	local Scale = Character:GetAttribute("Ragdolled") and 3 or 1
-	return Angular.Magnitude > SELF_SPIN * Scale or Horizontal > SELF_SPEED * Scale or Linear.Y > SELF_UP * Scale
-end
---
-local function OwnAntiFlingParts()
-	local Character, Root, Humanoid = GetCharacterParts(Client)
-	if not Root or Root.Anchored or Character:GetAttribute("IsCarried") or Character:GetAttribute("IsHooked") then
-		return nil -- the game moves you itself here
-	end
-	return Character, Root, Humanoid
-end
---
--- Before physics: pause flingers' collision, catch a launch left over from the last frame
 Connect(RunService.Stepped, function()
 	if not Get("VD_Misc_AntiFling") then
 		if next(AntiFling.Saved) or next(AntiFling.Flagged) then
@@ -8782,12 +8727,12 @@ Connect(RunService.Stepped, function()
 		return
 	end
 	local Now = os.clock()
-	local ScanMovers = Now - AntiFling.LastScan > 0.2
-	if ScanMovers then AntiFling.LastScan = Now end
+	local Limit = FLING_SPEED
 	for _, Player in Players:GetPlayers() do
 		if Player ~= Client then
 			local Character = Player.Character
-			if Character and (CharacterIsFlinging(Character) or (ScanMovers and CharacterHasFlingMover(Character))) then
+			local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+			if Root and Root:IsA("BasePart") and IsFlinging(Root, Limit) then
 				if not AntiFling.Flagged[Player] then
 					Library:Notify({Message = "Anti-fling: " .. Player.Name .. " is flinging, their collision is off for you", Delay = 2})
 				end
@@ -8807,18 +8752,27 @@ Connect(RunService.Stepped, function()
 			end
 		end
 	end
-	local Character, Root = OwnAntiFlingParts()
-	if Root and OwnLaunch(Character, Root) then StopOwnLaunch(Root, Now, false) end
 end)
 --
--- After physics: undo a launch on your own character and put it back
+-- After physics: undo a launch on your own character
 Connect(RunService.Heartbeat, function()
 	if not Get("VD_Misc_AntiFling") then AntiFling.SafeCFrame = nil return end
-	local Character, Root, Humanoid = OwnAntiFlingParts()
-	if not Root then AntiFling.SafeCFrame = nil return end
+	local Character, Root, Humanoid = GetCharacterParts(Client)
+	if not Root or Root.Anchored or Character:GetAttribute("IsCarried") or Character:GetAttribute("IsHooked") or Character:GetAttribute("Ragdolled") then
+		AntiFling.SafeCFrame = nil -- the game moves you itself here
+		return
+	end
 	local Now = os.clock()
-	if OwnLaunch(Character, Root) then
-		StopOwnLaunch(Root, Now, true)
+	local Limit = FLING_SPEED
+	local Linear, Angular = Root.AssemblyLinearVelocity, Root.AssemblyAngularVelocity
+	local Horizontal = Vector3.new(Linear.X, 0, Linear.Z).Magnitude
+	if Angular.Magnitude > FLING_SPIN or Horizontal > Limit or Linear.Y > Limit then
+		Root.AssemblyLinearVelocity = Vector3.zero
+		Root.AssemblyAngularVelocity = Vector3.zero
+		if AntiFling.SafeCFrame and Now - AntiFling.LastRescue > 0.25 then
+			Root.CFrame = AntiFling.SafeCFrame
+			AntiFling.LastRescue = Now
+		end
 	elseif Now - AntiFling.SafeTime > 0.1 then
 		if Humanoid.FloorMaterial ~= Enum.Material.Air then AntiFling.SafeCFrame = Root.CFrame end -- last calm spot on the ground
 		AntiFling.SafeTime = Now
