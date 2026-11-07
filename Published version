@@ -7873,8 +7873,8 @@ local function UpdateHighlights()
 			if Player ~= Client then
 				local Character = GetCharacterParts(Player)
 				if Character then
-					-- Priority 3: players fill slots that remain after utility objects
-					table.insert(Wanted, {Adornee = Character, Color = Player.TeamColor.Color, Priority = 3, Distance = 0})
+					-- Priority 2: players always get slots after generators/gates but before pallets/hooks
+					table.insert(Wanted, {Adornee = Character, Color = Player.TeamColor.Color, Priority = 2, Distance = 0})
 				end
 			end
 		end
@@ -7898,12 +7898,12 @@ local function UpdateHighlights()
 					local Progress = math.clamp(tonumber(Model:GetAttribute("RepairProgress")) or 0, 0, 100) / 100
 					Color = Color3.fromHSV(Progress / 3, 1, 1)
 				end
-				-- Priority tiers so critical objects always claim slots before less important ones:
-				--   0 = Generator (need to see ALL 7 at all times)
-				--   1 = ExitGate  (need to see both gates when gens are done)
-				--   2 = Pallet / Vault / Hook / Beartrap (closest first)
-				--   3 = Player chams (fill whatever remains)
-				local KindPriority = Kind == "Generator" and 0 or Kind == "ExitGate" and 1 or 2
+				-- Priority tiers so critical objects always claim slots first:
+				--   0 = Generator (all 7 always visible)
+				--   1 = ExitGate  (both gates always visible)
+				--   2 = Player chams (all players always visible)
+				--   3 = Pallet / Vault / Hook / Beartrap (closest first, fill remaining slots)
+				local KindPriority = Kind == "Generator" and 0 or Kind == "ExitGate" and 1 or 3
 				table.insert(Wanted, {Adornee = Model, Color = Color, Priority = KindPriority, Distance = (Pivot - CameraPosition).Magnitude})
 			end
 		end
