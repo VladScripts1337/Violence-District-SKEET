@@ -7330,6 +7330,7 @@ do -- Visuals
 	Utility:Toggle({Name = "Hook", Flag = "VD_Util_Hook", Default = true}):ColorPicker({Flag = "VD_Util_HookColor", Default = Color3.fromRGB(255, 60, 60)})
 	Utility:Toggle({Name = "Pallet", Flag = "VD_Util_Pallet", Default = true}):ColorPicker({Flag = "VD_Util_PalletColor", Default = Color3.fromRGB(255, 150, 40)})
 	Utility:Toggle({Name = "Vault", Flag = "VD_Util_Vault", Default = true}):ColorPicker({Flag = "VD_Util_VaultColor", Default = Color3.fromRGB(138, 43, 226)})
+	Utility:Toggle({Name = "Pumpkin (Halloween)", Flag = "VD_Util_Pumpkin", Default = true}):ColorPicker({Flag = "VD_Util_PumpkinColor", Default = Color3.fromRGB(255, 100, 0)})
 	Utility:Toggle({Name = "Text labels (name + gen %)", Flag = "VD_Util_Text"})
 	Utility:Toggle({Name = "Beartrap", Flag = "VD_Util_Trap", Default = true}):ColorPicker({Flag = "VD_Util_TrapColor", Default = Color3.fromRGB(255, 255, 255)})
 	--
@@ -7797,6 +7798,8 @@ local function ClassifyUtility(Object)
 		and not NameLower:find("blocked") and not NameLower:find("ui") and not NameLower:find("gui")
 	then return "Vault" end
 	if Name == "BearTrap" then return "Beartrap" end
+	-- Halloween pumpkins: Workspace > Map > Pumpkins > <model>
+	if ParentName == "Pumpkins" or Name == "Pumpkin" or NameLower:find("pumpkin") then return "Pumpkin" end
 	return nil
 end
 --
@@ -7848,6 +7851,7 @@ local UTILITY_FLAGS = {
 	Pallet = {"VD_Util_Pallet", "VD_Util_PalletColor", Color3.fromRGB(255, 150, 40)},
 	Vault = {"VD_Util_Vault", "VD_Util_VaultColor", Color3.fromRGB(138, 43, 226)},
 	Beartrap = {"VD_Util_Trap", "VD_Util_TrapColor", Color3.fromRGB(255, 255, 255)},
+	Pumpkin = {"VD_Util_Pumpkin", "VD_Util_PumpkinColor", Color3.fromRGB(255, 100, 0)},
 }
 --
 local function GetHighlight(Adornee)
