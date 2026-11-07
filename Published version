@@ -7326,6 +7326,7 @@ do -- Visuals
 	--
 	Utility:Toggle({Name = "Utility ESP", Flag = "VD_ESP_Utility"})
 	Utility:Toggle({Name = "Generator (red 0% -> green 100%)", Flag = "VD_Util_Gen", Default = true})
+	Utility:Toggle({Name = "Exit Gate", Flag = "VD_Util_Gate", Default = true}):ColorPicker({Flag = "VD_Util_GateColor", Default = Color3.fromRGB(0, 220, 100)})
 	Utility:Toggle({Name = "Hook", Flag = "VD_Util_Hook", Default = true}):ColorPicker({Flag = "VD_Util_HookColor", Default = Color3.fromRGB(255, 60, 60)})
 	Utility:Toggle({Name = "Pallet", Flag = "VD_Util_Pallet", Default = true}):ColorPicker({Flag = "VD_Util_PalletColor", Default = Color3.fromRGB(255, 150, 40)})
 	Utility:Toggle({Name = "Vault", Flag = "VD_Util_Vault", Default = true}):ColorPicker({Flag = "VD_Util_VaultColor", Default = Color3.fromRGB(138, 43, 226)})
@@ -7803,7 +7804,8 @@ local function TrackUtility(Object)
 	local Kind = ClassifyUtility(Object)
 	if Kind then
 		if Kind == "ExitGate" then
-			Features.ExitGates[Object] = true
+			Features.ExitGates[Object] = true  -- for AutoPlay door tracking
+			Features.Utility[Object] = "ExitGate"  -- for ESP highlight
 		else
 			Features.Utility[Object] = Kind
 		end
@@ -7841,6 +7843,7 @@ end)
 --
 local UTILITY_FLAGS = {
 	Generator = {"VD_Util_Gen", "VD_Util_GenColor", Color3.fromRGB(255, 0, 0)}, -- color comes from RepairProgress
+	ExitGate = {"VD_Util_Gate", "VD_Util_GateColor", Color3.fromRGB(0, 220, 100)},
 	Hook = {"VD_Util_Hook", "VD_Util_HookColor", Color3.fromRGB(255, 60, 60)},
 	Pallet = {"VD_Util_Pallet", "VD_Util_PalletColor", Color3.fromRGB(255, 150, 40)},
 	Vault = {"VD_Util_Vault", "VD_Util_VaultColor", Color3.fromRGB(138, 43, 226)},
@@ -7870,7 +7873,8 @@ local function UpdateHighlights()
 			if Player ~= Client then
 				local Character = GetCharacterParts(Player)
 				if Character then
-					table.insert(Wanted, {Adornee = Character, Color = Player.TeamColor.Color, Priority = 0, Distance = 0})
+					-- Priority 3: players fill slots that remain after utility objects
+					table.insert(Wanted, {Adornee = Character, Color = Player.TeamColor.Color, Priority = 3, Distance = 0})
 				end
 			end
 		end
@@ -7894,7 +7898,13 @@ local function UpdateHighlights()
 					local Progress = math.clamp(tonumber(Model:GetAttribute("RepairProgress")) or 0, 0, 100) / 100
 					Color = Color3.fromHSV(Progress / 3, 1, 1)
 				end
-				table.insert(Wanted, {Adornee = Model, Color = Color, Priority = 1, Distance = (Pivot - CameraPosition).Magnitude})
+				-- Priority tiers so critical objects always claim slots before less important ones:
+				--   0 = Generator (need to see ALL 7 at all times)
+				--   1 = ExitGate  (need to see both gates when gens are done)
+				--   2 = Pallet / Vault / Hook / Beartrap (closest first)
+				--   3 = Player chams (fill whatever remains)
+				local KindPriority = Kind == "Generator" and 0 or Kind == "ExitGate" and 1 or 2
+				table.insert(Wanted, {Adornee = Model, Color = Color, Priority = KindPriority, Distance = (Pivot - CameraPosition).Magnitude})
 			end
 		end
 	end
